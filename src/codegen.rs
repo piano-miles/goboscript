@@ -22,7 +22,7 @@ use self::{
 use crate::{
     ast::{
         Costume, Event, EventDetail, Expr, OnMessage, Proc, Project, Sprite, Stmt,
-        Stmts,
+        Stmts, Type,
     },
     blocks::{BinOp, Block, UnOp},
     config::Config,
@@ -97,7 +97,7 @@ impl Stmt {
                 }
             }
             Stmt::Until { .. } => "control_repeat_until",
-            Stmt::SetVar { .. } => "data_setvariableto",
+            Stmt::SetVar { .. } | Stmt::SetField { .. } => "data_setvariableto",
             Stmt::ChangeVar { .. } => "data_changevariableby",
             Stmt::Show { name, .. } | Stmt::Hide { name, .. } => {
                 if s.is_var(name) || s.is_local_var(name) {
@@ -234,9 +234,46 @@ where T: Write + Seek
         let mut comma = false;
         for proc in sprite.procs.values() {
             for var in proc.locals.values() {
-                let resolved = json!(local_variable_resolved_name(proc, &var.name));
-                self.comma(&mut comma)?;
-                write!(self, r#"{}:[{},{}]"#, resolved, resolved, json!(var.default))?;
+                match &var.type_ {
+                    Type::Any => {
+                        let resolved =
+                            json!(local_variable_resolved_name(proc, &var.name));
+                        self.comma(&mut comma)?;
+                        write!(
+                            self,
+                            r#"{}:[{},{}]"#,
+                            resolved,
+                            resolved,
+                            json!(var.default)
+                        )?;
+                    }
+                    Type::Struct(name, _) => {
+                        let Some(stype) = sprite.structs.get(name) else {
+                            diags.push(
+                                DiagnosticKind::UnrecognizedStruct {
+                                    name: name.clone(),
+                                }
+                                .to_diagnostic(var.span.clone()),
+                            );
+                            continue;
+                        };
+                        for (field, _) in &stype.fields {
+                            self.comma(&mut comma)?;
+                            let name = format!(
+                                "{}.{}",
+                                local_variable_resolved_name(proc, &var.name),
+                                field
+                            );
+                            write!(
+                                self,
+                                r#"{}:[{},{}]"#,
+                                json!(name),
+                                json!(name),
+                                json!(var.default)
+                            )?;
+                        }
+                    }
+                }
             }
         }
         for var in sprite.vars.values() {
@@ -246,14 +283,38 @@ where T: Write + Seek
                         .to_diagnostic(var.span.clone()),
                 );
             }
-            self.comma(&mut comma)?;
-            write!(
-                self,
-                r#"{}:[{},{}]"#,
-                json!(*var.name),
-                json!(*var.name),
-                json!(var.default)
-            )?;
+            match &var.type_ {
+                Type::Any => {
+                    self.comma(&mut comma)?;
+                    write!(
+                        self,
+                        r#"{}:[{},{}]"#,
+                        json!(*var.name),
+                        json!(*var.name),
+                        json!(var.default)
+                    )?;
+                }
+                Type::Struct(name, _) => {
+                    let Some(stype) = sprite.structs.get(name) else {
+                        diags.push(
+                            DiagnosticKind::UnrecognizedStruct { name: name.clone() }
+                                .to_diagnostic(var.span.clone()),
+                        );
+                        continue;
+                    };
+                    for (field, _) in &stype.fields {
+                        self.comma(&mut comma)?;
+                        let name = format!("{}.{}", var.name, field);
+                        write!(
+                            self,
+                            r#"{}:[{},{}]"#,
+                            json!(name),
+                            json!(name),
+                            json!(var.default)
+                        )?;
+                    }
+                }
+            }
         }
         self.write_all(br#"},"lists":{"#)?;
         let mut comma = false;
@@ -288,6 +349,19 @@ where T: Write + Seek
                         DiagnosticKind::UnusedEnumVariant {
                             enum_name: enum_.name.clone(),
                             variant_name: variant.clone(),
+                        }
+                        .to_diagnostic(span.clone()),
+                    )
+                }
+            }
+        }
+        for struct_ in sprite.structs.values() {
+            for (field, span) in &struct_.fields {
+                if !struct_.used_fields.contains(field) {
+                    diags.push(
+                        DiagnosticKind::UnusedStructField {
+                            struct_name: struct_.name.clone(),
+                            field_name: field.clone(),
                         }
                         .to_diagnostic(span.clone()),
                     )
@@ -542,6 +616,21 @@ where T: Write + Seek
                 self.expr(s, d, &input.borrow(), input_id, this_id)?;
                 self.stmts(s, d, body, body_id, Some(this_id))?;
             }
+            Stmt::SetField {
+                variable,
+                field,
+                variable_span,
+                field_span,
+                value,
+                ..
+            } => {
+                let value_id = self.id.new_id();
+                self.input(s, d, "VALUE", &value.borrow(), value_id)?;
+                self.end_obj()?;
+                self.resolve_field(s, d, variable, variable_span, field, field_span)?;
+                self.end_obj()?;
+                self.expr(s, d, &value.borrow(), value_id, this_id)?;
+            }
             | Stmt::SetVar { name, span, value, .. }
             | Stmt::ChangeVar { name, span, value } => {
                 let value_id = self.id.new_id();
@@ -741,7 +830,7 @@ where T: Write + Seek
             | Expr::Float(_)
             | Expr::Str(_)
             | Expr::Name { .. }
-            | Expr::EnumVariant { .. } => {}
+            | Expr::Accessor { .. } => {}
             Expr::Arg { name, span } => {
                 if !s.is_arg(name) {
                     d.push(
@@ -980,31 +1069,64 @@ where T: Write + Seek
                     write!(self, r#"[1,[10,{}]]"#, json!(**value))
                 }
             }
-            Expr::EnumVariant { enum_name, enum_span, variant_name, variant_span } => {
-                if let Some(enum_) = s.sprite.enums.get(enum_name) {
+            Expr::Accessor {
+                symbol_name,
+                symbol_span,
+                property_name,
+                property_span,
+            } => {
+                let enum_ = s.sprite.enums.get(symbol_name);
+                let variable = s.sprite.vars.get(symbol_name);
+                if let Some(enum_) = enum_ {
                     let index = enum_
                         .variants
                         .iter()
-                        .position(|(variant, _)| variant == variant_name);
+                        .position(|(variant, _)| variant == property_name);
                     if let Some(index) = index {
-                        write!(self, r#"[1,[10,{index}]]"#)
+                        write!(self, r#"[1,[10,{index}]]"#)?;
                     } else {
                         d.push(
                             DiagnosticKind::UnrecognizedEnumVariant {
-                                enum_name: enum_name.clone(),
-                                variant_name: variant_name.clone(),
+                                enum_name: symbol_name.clone(),
+                                variant_name: property_name.clone(),
                             }
-                            .to_diagnostic(variant_span.clone()),
+                            .to_diagnostic(property_span.clone()),
                         );
-                        Ok(())
                     }
+                    Ok(())
+                } else if variable
+                    .is_some_and(|it| matches!(it.type_, Type::Struct { .. }))
+                {
+                    let type_name = match &variable.unwrap().type_ {
+                        Type::Struct(name, _) => name,
+                        _ => unreachable!(),
+                    };
+                    let struct_ = s.sprite.structs.get(type_name).unwrap();
+                    let found = struct_
+                        .fields
+                        .iter()
+                        .find(|(variant, _)| variant == property_name);
+                    if found.is_some() {
+                        let resolved =
+                            json!(format!("{}.{}", symbol_name, property_name));
+                        write!(self, r#"[3,[12,{},{}],"#, resolved, resolved)?;
+                    } else {
+                        d.push(
+                            DiagnosticKind::UnrecognizedStructField {
+                                struct_name: symbol_name.clone(),
+                                field_name: property_name.clone(),
+                            }
+                            .to_diagnostic(property_span.clone()),
+                        );
+                    }
+                    self.input_shadow(s, shadow_id, name)
                 } else {
                     d.push(
                         DiagnosticKind::UnrecognizedEnum {
-                            enum_name: enum_name.clone(),
-                            variant_name: variant_name.clone(),
+                            enum_name: symbol_name.clone(),
+                            variant_name: property_name.clone(),
                         }
-                        .to_diagnostic(enum_span.clone()),
+                        .to_diagnostic(symbol_span.clone()),
                     );
                     Ok(())
                 }
@@ -1093,6 +1215,62 @@ where T: Write + Seek
         d.push(
             DiagnosticKind::UnrecognizedVariable(name.clone())
                 .to_diagnostic(span.clone()),
+        );
+        Ok(())
+    }
+
+    fn resolve_field(
+        &mut self,
+        s: S,
+        d: D,
+        variable_name: &SmolStr,
+        variable_span: &Span,
+        field_name: &SmolStr,
+        field_span: &Span,
+    ) -> io::Result<()> {
+        if s.is_local_var(variable_name) {
+            let variable = s.proc.unwrap().locals.get(variable_name).unwrap();
+            let struct_ =
+                &s.sprite.structs.get(variable.type_.struct_().unwrap().0).unwrap();
+            if !struct_.fields.iter().map(|(name, _)| name).any(|it| it == field_name) {
+                d.push(
+                    DiagnosticKind::UnrecognizedStructField {
+                        struct_name: struct_.name.clone(),
+                        field_name: field_name.clone(),
+                    }
+                    .to_diagnostic(field_span.clone()),
+                );
+            }
+            return self.single_field_id(
+                "VARIABLE",
+                &format!(
+                    "{}.{}",
+                    &local_variable_resolved_name(s.proc.unwrap(), variable_name),
+                    field_name
+                ),
+            );
+        }
+        if s.is_var(variable_name) {
+            let variable = s.sprite.vars.get(variable_name).unwrap();
+            let struct_ =
+                &s.sprite.structs.get(variable.type_.struct_().unwrap().0).unwrap();
+            if !struct_.fields.iter().map(|(name, _)| name).any(|it| it == field_name) {
+                d.push(
+                    DiagnosticKind::UnrecognizedStructField {
+                        struct_name: struct_.name.clone(),
+                        field_name: field_name.clone(),
+                    }
+                    .to_diagnostic(field_span.clone()),
+                );
+            }
+            return self.single_field_id(
+                "VARIABLE",
+                &format!("{}.{}", variable_name, field_name),
+            );
+        }
+        d.push(
+            DiagnosticKind::UnrecognizedVariable(variable_name.clone())
+                .to_diagnostic(variable_span.clone()),
         );
         Ok(())
     }

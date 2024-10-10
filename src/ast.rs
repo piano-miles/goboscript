@@ -30,6 +30,7 @@ pub struct Sprite {
     pub procs: FxHashMap<SmolStr, Proc>,
     pub used_procs: FxHashSet<SmolStr>,
     pub enums: FxHashMap<SmolStr, Enum>,
+    pub structs: FxHashMap<SmolStr, Struct>,
     pub vars: FxHashMap<SmolStr, Var>,
     pub lists: FxHashMap<SmolStr, List>,
     pub broadcasts: FxHashSet<SmolStr>,
@@ -69,16 +70,43 @@ impl Enum {
 }
 
 #[derive(Debug)]
+
+pub struct Struct {
+    pub name: SmolStr,
+    pub span: Span,
+    pub fields: Vec<(SmolStr, Span)>,
+    pub used_fields: FxHashSet<SmolStr>,
+}
+
+impl Struct {
+    pub fn new(name: SmolStr, span: Span, fields: Vec<(SmolStr, Span)>) -> Self {
+        Self { name, span, fields, used_fields: Default::default() }
+    }
+}
+
+#[derive(Debug)]
 pub struct Var {
     pub name: SmolStr,
     pub span: Span,
     pub default: Literal,
+    pub type_: Type,
     pub used: bool,
 }
 
 impl Var {
-    pub fn new(name: SmolStr, span: Span, default: Option<Literal>) -> Self {
-        Self { name, span, default: default.unwrap_or(Literal::Int(0)), used: false }
+    pub fn new(
+        name: SmolStr,
+        span: Span,
+        type_: Type,
+        default: Option<Literal>,
+    ) -> Self {
+        Self {
+            name,
+            span,
+            default: default.unwrap_or(Literal::Int(0)),
+            type_,
+            used: false,
+        }
     }
 }
 
@@ -103,6 +131,7 @@ pub struct References {
     pub lists: FxHashSet<SmolStr>,
     pub messages: FxHashSet<SmolStr>,
     pub enum_variants: FxHashSet<(SmolStr, SmolStr)>,
+    pub struct_fields: FxHashSet<(SmolStr, SmolStr)>,
 }
 
 #[derive(Debug)]
@@ -181,7 +210,7 @@ impl EventDetail {
 
 pub type Stmts = Vec<Stmt>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Stmt {
     Repeat {
         times: Rrc<Expr>,
@@ -204,7 +233,15 @@ pub enum Stmt {
         name: SmolStr,
         span: Span,
         value: Rrc<Expr>,
+        type_: Type,
         is_local: bool,
+    },
+    SetField {
+        variable: SmolStr,
+        field: SmolStr,
+        variable_span: Span,
+        field_span: Span,
+        value: Rrc<Expr>,
     },
     ChangeVar {
         name: SmolStr,
@@ -293,11 +330,11 @@ pub enum Expr {
         lhs: Rrc<Expr>,
         rhs: Rrc<Expr>,
     },
-    EnumVariant {
-        enum_name: SmolStr,
-        enum_span: Span,
-        variant_name: SmolStr,
-        variant_span: Span,
+    Accessor {
+        symbol_name: SmolStr,
+        symbol_span: Span,
+        property_name: SmolStr,
+        property_span: Span,
     },
 }
 
@@ -394,6 +431,21 @@ impl Stmt {
             Stmt::Block { span, .. } => span,
             Stmt::ProcCall { span, .. } => span,
             _ => unreachable!(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum Type {
+    Any,
+    Struct(SmolStr, Span),
+}
+
+impl Type {
+    pub fn struct_(&self) -> Option<(&SmolStr, &Span)> {
+        match self {
+            Type::Struct(name, span) => Some((name, span)),
+            _ => None,
         }
     }
 }

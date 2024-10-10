@@ -1,13 +1,14 @@
 use fxhash::{FxHashMap, FxHashSet};
 use smol_str::SmolStr;
 
-use crate::ast::{Enum, List, Proc, Project, References, Var};
+use crate::ast::{Enum, List, Proc, Project, References, Sprite, Struct, Var};
 
 struct Scope<'a> {
     used_procs: &'a mut FxHashSet<SmolStr>,
     vars: &'a mut FxHashMap<SmolStr, Var>,
     lists: &'a mut FxHashMap<SmolStr, List>,
     enums: &'a mut FxHashMap<SmolStr, Enum>,
+    structs: &'a mut FxHashMap<SmolStr, Struct>,
     global_broadcasts: &'a mut FxHashSet<SmolStr>,
     global_vars: Option<&'a mut FxHashMap<SmolStr, Var>>,
     global_lists: Option<&'a mut FxHashMap<SmolStr, List>>,
@@ -22,6 +23,7 @@ pub fn visit_project(project: &mut Project) {
                 vars: &mut project.stage.vars,
                 lists: &mut project.stage.lists,
                 enums: &mut project.stage.enums,
+                structs: &mut project.stage.structs,
                 global_broadcasts: &mut project.stage.broadcasts,
                 global_vars: None,
                 global_lists: None,
@@ -38,6 +40,7 @@ pub fn visit_project(project: &mut Project) {
                 vars: &mut project.stage.vars,
                 lists: &mut project.stage.lists,
                 enums: &mut project.stage.enums,
+                structs: &mut project.stage.structs,
                 global_broadcasts: &mut project.stage.broadcasts,
                 global_vars: None,
                 global_lists: None,
@@ -56,6 +59,7 @@ pub fn visit_project(project: &mut Project) {
                     vars: &mut sprite.vars,
                     lists: &mut sprite.lists,
                     enums: &mut sprite.enums,
+                    structs: &mut sprite.structs,
                     global_broadcasts: &mut project.stage.broadcasts,
                     global_vars: Some(&mut project.stage.vars),
                     global_lists: Some(&mut project.stage.lists),
@@ -72,6 +76,7 @@ pub fn visit_project(project: &mut Project) {
                     vars: &mut sprite.vars,
                     lists: &mut sprite.lists,
                     enums: &mut sprite.enums,
+                    structs: &mut sprite.structs,
                     global_broadcasts: &mut project.stage.broadcasts,
                     global_vars: Some(&mut project.stage.vars),
                     global_lists: Some(&mut project.stage.lists),
@@ -118,6 +123,10 @@ fn resolve_references(
     for (enum_name, variant_name) in &references.enum_variants {
         let enum_ = &mut scope.enums.get_mut(enum_name).unwrap();
         enum_.used_variants.insert(variant_name.clone());
+    }
+    for (struct_name, field_name) in &references.struct_fields {
+        let struct_ = &mut scope.structs.get_mut(struct_name).unwrap();
+        struct_.used_fields.insert(field_name.clone());
     }
     for message in &references.messages {
         scope.global_broadcasts.insert(message.clone());

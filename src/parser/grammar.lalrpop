@@ -50,6 +50,9 @@ Declr: () = {
     },
     ENUM <l:@L> <name:NAME> <r:@R> "{" <variants:SpannedComma<NAME>> "}" => {
         sprite.enums.insert(name.clone(), Enum::new(name, l..r, variants));
+    },
+    STRUCT <l:@L> <name:NAME> <r:@R> "{" <fields:SpannedComma<NAME>> "}" => {
+        sprite.structs.insert(name.clone(), Struct::new(name, l..r, fields));
     }
 }
 
@@ -61,23 +64,35 @@ Stmt: Stmt = {
     <l:@L> FOREVER <r:@R> <body:Stmts> => Stmt::Forever { body, span: l..r },
     UNTIL <cond:Expr> <body:Stmts> => Stmt::Until { cond, body },
     LOCAL <l:@L> <name:NAME> <r:@R> "=" <value:Expr> ";" => {
-        Stmt::SetVar { name: name.clone(), span: l..r, value, is_local: true }
+        Stmt::SetVar { name: name.clone(), span: l..r, value, type_: Type::Any, is_local: true }
     },
     <l:@L> <name:NAME> <r:@R> "=" <value:Expr> ";" => {
         if !sprite.vars.contains_key(&name) {
-            sprite.vars.insert(name.clone(), Var::new(name.clone(), l..r, None));
+            sprite.vars.insert(name.clone(), Var::new(name.clone(), l..r, Type::Any, None));
         }
-        Stmt::SetVar { name: name.clone(), span: l..r, value, is_local: false }
+        Stmt::SetVar { name: name.clone(), span: l..r, value, type_: Type::Any, is_local: false }
+    },
+    <l:@L> <variable:NAME> <r:@R> "." <fl:@L> <field:NAME> <fr:@R> "=" <value:Expr> ";" => {
+        Stmt::SetField { variable, variable_span: l..r, field, field_span: fl..fr, value }
+    },
+    <lt:@L> <type_:NAME> <rt:@R> <l:@L> <name:NAME> <r:@R> "=" <value:Expr> ";" => {
+        if !sprite.vars.contains_key(&name) {
+            sprite.vars.insert(name.clone(), Var::new(name.clone(), l..r, Type::Struct(type_.clone(), lt..rt), None));
+        }
+        Stmt::SetVar { name: name.clone(), span: l..r, value, type_: Type::Struct(type_.clone(), lt..rt), is_local: false }
+    },
+    LOCAL <lt:@L> <type_:NAME> <rt:@R> <l:@L> <name:NAME> <r:@R> "=" <value:Expr> ";" => {
+        Stmt::SetVar { name: name.clone(), span: l..r, value, type_: Type::Struct(type_, lt..rt), is_local: true }
     },
     <l:@L> <name:NAME> <r:@R> "++" ";" => Stmt::ChangeVar { name, span: l..r, value: Expr::Int(1).into() },
     <l:@L> <name:NAME> <r:@R> "--" ";" => Stmt::ChangeVar { name, span: l..r, value: Expr::Int(-1).into() },
     <l:@L> <name:NAME> <r:@R> "+=" <value:Expr> ";" => Stmt::ChangeVar { name, span: l..r, value },
     <l:@L> <name:NAME> <r:@R> "-=" <value:Expr> ";" => Stmt::ChangeVar { name,               span: l..r, value: BinOp::Sub .to_expr(Expr::Int(0).into(), value).into()},
-    <l:@L> <name:NAME> <r:@R> "*=" <value:Expr> ";" => Stmt::SetVar { name: name.clone(), span: l..r, value: BinOp::Mul .to_expr(Expr::Name { name: name.clone(), span: l..r }.into(), value).into(), is_local: false },
-    <l:@L> <name:NAME> <r:@R> "/=" <value:Expr> ";" => Stmt::SetVar { name: name.clone(), span: l..r, value: BinOp::Div .to_expr(Expr::Name { name: name.clone(), span: l..r }.into(), value).into(), is_local: false },
-    <l:@L> <name:NAME> <r:@R> "//=" <value:Expr> ";" => Stmt::SetVar { name: name.clone(), span: l..r, value: BinOp::FloorDiv .to_expr(Expr::Name { name: name.clone(), span: l..r }.into(), value).into(), is_local: false },
-    <l:@L> <name:NAME> <r:@R> "%=" <value:Expr> ";" => Stmt::SetVar { name: name.clone(), span: l..r, value: BinOp::Mod .to_expr(Expr::Name { name: name.clone(), span: l..r }.into(), value).into(), is_local: false },
-    <l:@L> <name:NAME> <r:@R> "&=" <value:Expr> ";" => Stmt::SetVar { name: name.clone(), span: l..r, value: BinOp::Join.to_expr(Expr::Name { name: name.clone(), span: l..r }.into(), value).into(), is_local: false },
+    <l:@L> <name:NAME> <r:@R> "*=" <value:Expr> ";" => Stmt::SetVar { name: name.clone(), span: l..r, value: BinOp::Mul      .to_expr(Expr::Name { name: name.clone(), span: l..r }.into(), value).into(), type_: Type::Any, is_local: false },
+    <l:@L> <name:NAME> <r:@R> "/=" <value:Expr> ";" => Stmt::SetVar { name: name.clone(), span: l..r, value: BinOp::Div      .to_expr(Expr::Name { name: name.clone(), span: l..r }.into(), value).into(), type_: Type::Any, is_local: false },
+    <l:@L> <name:NAME> <r:@R> "//="<value:Expr> ";" => Stmt::SetVar { name: name.clone(), span: l..r, value: BinOp::FloorDiv .to_expr(Expr::Name { name: name.clone(), span: l..r }.into(), value).into(), type_: Type::Any, is_local: false },
+    <l:@L> <name:NAME> <r:@R> "%=" <value:Expr> ";" => Stmt::SetVar { name: name.clone(), span: l..r, value: BinOp::Mod      .to_expr(Expr::Name { name: name.clone(), span: l..r }.into(), value).into(), type_: Type::Any, is_local: false },
+    <l:@L> <name:NAME> <r:@R> "&=" <value:Expr> ";" => Stmt::SetVar { name: name.clone(), span: l..r, value: BinOp::Join     .to_expr(Expr::Name { name: name.clone(), span: l..r }.into(), value).into(), type_: Type::Any, is_local: false },
     SHOW <l:@L> <name:NAME> <r:@R> ";" => Stmt::Show { name, span: l..r },
     HIDE <l:@L> <name:NAME> <r:@R> ";" => Stmt::Hide { name, span: l..r },
     <l:@L> SHOW <r:@R> ";" => Stmt::Block { block: Block::Show, span: l..r, args: vec![] },
@@ -183,12 +198,12 @@ Term: Rrc<Expr> = {
         None => Err(ParseError::User { error: DiagnosticKind::UnrecognizedReporter(name).to_diagnostic(l..r) }),
     },
     <l:@L> <e:Term> "[" <i:Expr> "]" <r:@R> => BinOp::Of.to_expr(e, i).into(),
-    <nl:@L> <enum_name:NAME> <nr:@R> "." <vl:@L> <variant_name:NAME> <vr:@R> =>
-        Expr::EnumVariant {
-            enum_name,
-            enum_span: nl..nr,
-            variant_name,
-            variant_span: vl..vr
+    <sl:@L> <symbol_name:NAME> <sr:@R> "." <pl:@L> <property_name:NAME> <pr:@R> =>
+        Expr::Accessor {
+            symbol_name,
+            symbol_span: sl..sr,
+            property_name,
+            property_span: pl..pr
         }.into(),
 }
 
@@ -308,5 +323,6 @@ extern {
         ENUM           => Token::Enum,
         TRUE           => Token::True,
         FALSE          => Token::False,
+        STRUCT         => Token::Struct,
     }
 }

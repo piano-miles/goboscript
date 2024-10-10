@@ -36,11 +36,14 @@ pub enum DiagnosticKind {
     UnrecognizedArgument { name: SmolStr, proc: Option<SmolStr> },
     UnrecognizedEnum { enum_name: SmolStr, variant_name: SmolStr },
     UnrecognizedEnumVariant { enum_name: SmolStr, variant_name: SmolStr },
+    UnrecognizedStruct { name: SmolStr },
+    UnrecognizedStructField { struct_name: SmolStr, field_name: SmolStr },
     UnusedVariable(SmolStr),
     UnusedProcedure(SmolStr),
     UnusedList(SmolStr),
     UnusedArgument(SmolStr),
     UnusedEnumVariant { enum_name: SmolStr, variant_name: SmolStr },
+    UnusedStructField { struct_name: SmolStr, field_name: SmolStr },
     BlockArgsCountMismatch { block: Block, given: usize },
     ReprArgsCountMismatch { repr: Repr, given: usize },
     ProcArgsCountMismatch { proc: SmolStr, given: usize },
@@ -68,11 +71,14 @@ impl DiagnosticKind {
             Self::UnrecognizedArgument { .. } => "unrecognized argument",
             Self::UnrecognizedEnum { .. } => "unrecognized enum",
             Self::UnrecognizedEnumVariant { .. } => "unrecognized enum variant",
+            Self::UnrecognizedStruct { .. } => "unrecognized struct",
+            Self::UnrecognizedStructField { .. } => "unrecognized struct field",
             Self::UnusedVariable(_) => "unused variable",
             Self::UnusedProcedure(_) => "unused procedure",
             Self::UnusedList(_) => "unused list",
             Self::UnusedArgument(_) => "unused argument",
             Self::UnusedEnumVariant { .. } => "unused enum variant",
+            Self::UnusedStructField { .. } => "unused struct field",
             Self::BlockArgsCountMismatch { block, given } => {
                 match given.cmp(&block.args().len()) {
                     Ordering::Less => "too few arguments for block",
@@ -182,7 +188,7 @@ impl DiagnosticKind {
 
     pub fn log_level(&self) -> LogLevel {
         match self {
-            Self::InvalidToken
+            | Self::InvalidToken
             | Self::UnrecognizedEof(_)
             | Self::UnrecognizedToken(_, _)
             | Self::ExtraToken(_)
@@ -195,16 +201,20 @@ impl DiagnosticKind {
             | Self::UnrecognizedArgument { .. }
             | Self::UnrecognizedEnum { .. }
             | Self::UnrecognizedEnumVariant { .. }
+            | Self::UnrecognizedStruct { .. }
+            | Self::UnrecognizedStructField { .. }
             | Self::BlockArgsCountMismatch { .. }
             | Self::ReprArgsCountMismatch { .. }
             | Self::ProcArgsCountMismatch { .. }
             | Self::NoCostumes => LogLevel::Error,
-            Self::FollowedByUnreachableCode
+
+            | Self::FollowedByUnreachableCode
             | Self::UnusedVariable(_)
             | Self::UnusedProcedure(_)
             | Self::UnusedList(_)
             | Self::UnusedArgument(_)
-            | Self::UnusedEnumVariant { .. } => LogLevel::Warning,
+            | Self::UnusedEnumVariant { .. }
+            | Self::UnusedStructField { .. } => LogLevel::Warning,
         }
     }
 }

@@ -191,4 +191,6 @@ pub enum Token {
     True,
     #[token("false")]
     False,
+    #[token("struct")]
+    Struct,
 }

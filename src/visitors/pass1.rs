@@ -5,7 +5,7 @@ use super::pass0;
 use crate::{
     ast::{
         Enum, Event, Expr, List, OnMessage, Proc, Project, References, Rrc, Sprite,
-        Stmt, Var,
+        Stmt, Struct, Var,
     },
     blocks::{BinOp, Block, UnOp},
 };
@@ -19,6 +19,7 @@ struct S<'a> {
     vars: &'a FxHashMap<SmolStr, Var>,
     lists: &'a FxHashMap<SmolStr, List>,
     enums: &'a FxHashMap<SmolStr, Enum>,
+    structs: &'a FxHashMap<SmolStr, Struct>,
     global_vars: Option<&'a FxHashMap<SmolStr, Var>>,
     global_lists: Option<&'a FxHashMap<SmolStr, List>>,
 }
@@ -35,6 +36,7 @@ fn visit_sprite(sprite: &mut Sprite, stage: Option<&Sprite>) {
         vars: &sprite.vars,
         lists: &sprite.lists,
         enums: &sprite.enums,
+        structs: &sprite.structs,
         global_vars: stage.map(|s| &s.vars),
         global_lists: stage.map(|s| &s.lists),
     };
@@ -79,6 +81,39 @@ fn visit_on_message(on_message: &mut OnMessage, s: &mut S<'_>) {
 }
 
 fn visit_stmts(stmts: &mut Vec<Stmt>, v: &mut V<'_>, s: &mut S<'_>) {
+    let mut i = 0;
+    while i < stmts.len() {
+        let mut stuff = vec![];
+        match &stmts[i] {
+            Stmt::SetVar { name, value, span, .. } => {
+                if let Some(variable) = s.vars.get(name) {
+                    if let Some(struct_) =
+                        s.structs.get(variable.type_.struct_().unwrap().0)
+                    {
+                        for (field, _) in &struct_.fields {
+                            stuff.push(Stmt::SetField {
+                                variable: name.clone(),
+                                variable_span: span.clone(),
+                                field: field.clone(),
+                                field_span: span.clone(),
+                                value: value.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        if !stuff.is_empty() {
+            stmts.remove(i);
+        } else {
+            i += 1;
+        }
+        for stmt in stuff.iter() {
+            stmts.insert(i, stmt.clone());
+            i += 1;
+        }
+    }
     for stmt in stmts {
         visit_stmt(stmt, v, s);
     }
@@ -115,6 +150,9 @@ fn visit_stmt(stmt: &mut Stmt, v: &mut V<'_>, s: &mut S<'_>) {
         Stmt::SetVar { value, .. } => {
             // v.references.vars.insert(name.clone());
             // should set variable count as a reference?
+            visit_expr(value, v, s);
+        }
+        Stmt::SetField { value, .. } => {
             visit_expr(value, v, s);
         }
         Stmt::ChangeVar { value, .. } => {
@@ -181,11 +219,15 @@ fn visit_expr(expr: &mut Rrc<Expr>, v: &mut V<'_>, s: &mut S<'_>) {
         Expr::Int(_) => {}
         Expr::Float(_) => {}
         Expr::Str(_) => {}
-        Expr::EnumVariant { enum_name, variant_name, .. } => {
-            if s.enums.contains_key(enum_name) {
+        Expr::Accessor { symbol_name, property_name, .. } => {
+            if s.enums.contains_key(symbol_name) {
                 v.references
                     .enum_variants
-                    .insert((enum_name.clone(), variant_name.clone()));
+                    .insert((symbol_name.clone(), property_name.clone()));
+            } else if s.structs.contains_key(symbol_name) {
+                v.references
+                    .struct_fields
+                    .insert((symbol_name.clone(), property_name.clone()));
             }
         }
         Expr::Name { name, .. } => {
