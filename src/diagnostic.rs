@@ -9,7 +9,7 @@ use smol_str::SmolStr;
 
 use self::keys::all_keys;
 use crate::{
-    ast::Sprite,
+    ast::{Sprite, Type},
     blocks::{Block, Repr},
     lexer::token::Token,
 };
@@ -44,6 +44,8 @@ pub enum DiagnosticKind {
     UnusedArgument(SmolStr),
     UnusedEnumVariant { enum_name: SmolStr, variant_name: SmolStr },
     UnusedStructField { struct_name: SmolStr, field_name: SmolStr },
+    TypeError { given: Type, expected: Type },
+    InvalidPropertyAccess { symbol_name: SmolStr, property_name: SmolStr },
     BlockArgsCountMismatch { block: Block, given: usize },
     ReprArgsCountMismatch { repr: Repr, given: usize },
     ProcArgsCountMismatch { proc: SmolStr, given: usize },
@@ -79,6 +81,8 @@ impl DiagnosticKind {
             Self::UnusedArgument(_) => "unused argument",
             Self::UnusedEnumVariant { .. } => "unused enum variant",
             Self::UnusedStructField { .. } => "unused struct field",
+            Self::TypeError { .. } => "type error",
+            Self::InvalidPropertyAccess { .. } => "invalid property access",
             Self::BlockArgsCountMismatch { block, given } => {
                 match given.cmp(&block.args().len()) {
                     Ordering::Less => "too few arguments for block",
@@ -106,6 +110,12 @@ impl DiagnosticKind {
 
     fn help(&self, sprite: &Sprite) -> Option<String> {
         match self {
+            Self::TypeError { given, expected } => {
+                Some(format!("expected {}, found {}", expected, given))
+            }
+            Self::InvalidPropertyAccess { symbol_name, .. } => {
+                Some(format!("{} is not a struct or enum", symbol_name))
+            }
             Self::BlockArgsCountMismatch { block, given: _ } => {
                 let overloads = Block::overloads(block.name());
                 if !overloads.is_empty() {
@@ -206,6 +216,8 @@ impl DiagnosticKind {
             | Self::BlockArgsCountMismatch { .. }
             | Self::ReprArgsCountMismatch { .. }
             | Self::ProcArgsCountMismatch { .. }
+            | Self::TypeError { .. }
+            | Self::InvalidPropertyAccess { .. }
             | Self::NoCostumes => LogLevel::Error,
 
             | Self::FollowedByUnreachableCode
@@ -268,7 +280,7 @@ impl Diagnostic {
         if self.span == (0..0) {
             eprintln!(
                 "      {} {}:{}:{}",
-                "─→".bold(),
+                "─🡒".bold(),
                 path.blue(),
                 line_no + 1,
                 col_no + 1
@@ -278,7 +290,7 @@ impl Diagnostic {
 
         eprintln!(
             "      {} {}:{}:{}",
-            "╭→".bold(),
+            "╭🡒".bold(),
             path.blue(),
             line_no + 1,
             col_no + 1

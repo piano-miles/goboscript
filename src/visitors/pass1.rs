@@ -87,8 +87,10 @@ fn visit_stmts(stmts: &mut Vec<Stmt>, v: &mut V<'_>, s: &mut S<'_>) {
         match &stmts[i] {
             Stmt::SetVar { name, value, span, .. } => {
                 if let Some(variable) = s.vars.get(name) {
-                    if let Some(struct_) =
-                        s.structs.get(variable.type_.struct_().unwrap().0)
+                    if let Some(struct_) = variable
+                        .type_
+                        .struct_()
+                        .and_then(|(name, _)| s.structs.get(name))
                     {
                         for (field, _) in &struct_.fields {
                             stuff.push(Stmt::SetField {

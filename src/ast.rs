@@ -1,4 +1,4 @@
-use std::{cell::RefCell, path::Path, rc::Rc};
+use std::{cell::RefCell, fmt::Display, path::Path, rc::Rc};
 
 use fxhash::{FxHashMap, FxHashSet};
 use logos::Span;
@@ -446,6 +446,15 @@ impl Type {
         match self {
             Type::Struct(name, span) => Some((name, span)),
             _ => None,
+        }
+    }
+}
+
+impl Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Type::Any => write!(f, "any"),
+            Type::Struct(name, _) => write!(f, "{}", name),
         }
     }
 }

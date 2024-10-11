@@ -1,7 +1,7 @@
 use fxhash::FxHashMap;
 use smol_str::SmolStr;
 
-use crate::ast::{Proc, Stmt, Type, Var};
+use crate::ast::{Proc, Stmt, Var};
 
 pub fn visit_proc(proc: &mut Proc) {
     visit_stmts(&mut proc.body, &mut proc.locals);

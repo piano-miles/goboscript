@@ -1076,7 +1076,10 @@ where T: Write + Seek
                 property_span,
             } => {
                 let enum_ = s.sprite.enums.get(symbol_name);
-                let variable = s.sprite.vars.get(symbol_name);
+                let variable =
+                    s.sprite.vars.get(symbol_name).or_else(|| {
+                        s.proc.and_then(|proc| proc.locals.get(symbol_name))
+                    });
                 if let Some(enum_) = enum_ {
                     let index = enum_
                         .variants
@@ -1107,8 +1110,12 @@ where T: Write + Seek
                         .iter()
                         .find(|(variant, _)| variant == property_name);
                     if found.is_some() {
-                        let resolved =
-                            json!(format!("{}.{}", symbol_name, property_name));
+                        let resolved = self
+                            .resolve_local_field(s, symbol_name, property_name)
+                            .unwrap_or_else(|| {
+                                format!("{}.{}", symbol_name, property_name)
+                            });
+                        let resolved = json!(resolved);
                         write!(self, r#"[3,[12,{},{}],"#, resolved, resolved)?;
                     } else {
                         d.push(
@@ -1122,9 +1129,9 @@ where T: Write + Seek
                     self.input_shadow(s, shadow_id, name)
                 } else {
                     d.push(
-                        DiagnosticKind::UnrecognizedEnum {
-                            enum_name: symbol_name.clone(),
-                            variant_name: property_name.clone(),
+                        DiagnosticKind::InvalidPropertyAccess {
+                            symbol_name: symbol_name.clone(),
+                            property_name: property_name.clone(),
                         }
                         .to_diagnostic(symbol_span.clone()),
                     );
@@ -1137,6 +1144,21 @@ where T: Write + Seek
                 {
                     write!(self, "[3,[12,{},{}],", resolved, resolved)?;
                 } else if s.is_var(var) {
+                    let variable = s
+                        .sprite
+                        .vars
+                        .get(var)
+                        .or_else(|| s.stage.and_then(|stage| stage.vars.get(var)))
+                        .unwrap();
+                    if !matches!(variable.type_, Type::Any) {
+                        d.push(
+                            DiagnosticKind::TypeError {
+                                given: variable.type_.clone(),
+                                expected: Type::Any,
+                            }
+                            .to_diagnostic(span.clone()),
+                        );
+                    }
                     write!(self, "[3,[12,{},{}],", json!(**var), json!(**var))?;
                 } else if s.is_list(var) {
                     write!(self, "[3,[13,{},{}],", json!(**var), json!(**var))?;
@@ -1196,6 +1218,19 @@ where T: Write + Seek
         })
     }
 
+    fn resolve_local_field(
+        &mut self,
+        s: S,
+        name: &SmolStr,
+        field_name: &SmolStr,
+    ) -> Option<String> {
+        s.proc.and_then(|proc| {
+            proc.locals.contains_key(name).then(|| {
+                format!("{}.{}", local_variable_resolved_name(proc, name), field_name)
+            })
+        })
+    }
+
     fn resolve_variable(
         &mut self,
         s: S,
@@ -1252,8 +1287,17 @@ where T: Write + Seek
         }
         if s.is_var(variable_name) {
             let variable = s.sprite.vars.get(variable_name).unwrap();
-            let struct_ =
-                &s.sprite.structs.get(variable.type_.struct_().unwrap().0).unwrap();
+            let Some(type_) = variable.type_.struct_() else {
+                d.push(
+                    DiagnosticKind::InvalidPropertyAccess {
+                        symbol_name: variable_name.clone(),
+                        property_name: field_name.clone(),
+                    }
+                    .to_diagnostic(variable_span.clone()),
+                );
+                return Ok(());
+            };
+            let struct_ = &s.sprite.structs.get(type_.0).unwrap();
             if !struct_.fields.iter().map(|(name, _)| name).any(|it| it == field_name) {
                 d.push(
                     DiagnosticKind::UnrecognizedStructField {
