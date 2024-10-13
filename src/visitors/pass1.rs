@@ -86,20 +86,60 @@ fn visit_stmts(stmts: &mut Vec<Stmt>, v: &mut V<'_>, s: &mut S<'_>) {
         let mut stuff = vec![];
         match &stmts[i] {
             Stmt::SetVar { name, value, span, .. } => {
-                if let Some(variable) = s.vars.get(name) {
+                if let Some(variable) = s.vars.get(name).or_else(|| {
+                    s.global_vars.and_then(|global_vars| global_vars.get(name))
+                }) {
                     if let Some(struct_) = variable
                         .type_
                         .struct_()
                         .and_then(|(name, _)| s.structs.get(name))
                     {
-                        for (field, _) in &struct_.fields {
-                            stuff.push(Stmt::SetField {
-                                variable: name.clone(),
-                                variable_span: span.clone(),
-                                field: field.clone(),
-                                field_span: span.clone(),
-                                value: value.clone(),
+                        let value_brw = &*value.borrow();
+                        let value_tuple = if let Expr::Name { name, span } = value_brw {
+                            Some((name, span))
+                        } else {
+                            None
+                        };
+                        let value_variable =
+                            value_tuple.and_then(|(value_variable, _)| {
+                                s.vars.get(value_variable).or_else(|| {
+                                    s.global_vars.and_then(|global_vars| {
+                                        global_vars.get(value_variable)
+                                    })
+                                })
                             });
+                        let value_variable_struct = value_variable
+                            .and_then(|value_variable| value_variable.type_.struct_());
+
+                        if let Some(value_variable_struct) = value_variable_struct {
+                            let (value_name, value_span) = value_tuple.unwrap();
+                            if *value_variable_struct.0 == struct_.name {
+                                for (field, field_span) in &struct_.fields {
+                                    stuff.push(Stmt::SetField {
+                                        variable: name.clone(),
+                                        variable_span: span.clone(),
+                                        field: field.clone(),
+                                        field_span: span.clone(),
+                                        value: Expr::Accessor {
+                                            symbol_name: value_name.clone(),
+                                            symbol_span: value_span.clone(),
+                                            property_name: field.clone(),
+                                            property_span: field_span.clone(), // if this is being read, something is wrong
+                                        }
+                                        .into(),
+                                    })
+                                }
+                            }
+                        } else {
+                            for (field, _) in &struct_.fields {
+                                stuff.push(Stmt::SetField {
+                                    variable: name.clone(),
+                                    variable_span: span.clone(),
+                                    field: field.clone(),
+                                    field_span: span.clone(),
+                                    value: value.clone(),
+                                });
+                            }
                         }
                     }
                 }

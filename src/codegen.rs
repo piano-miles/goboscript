@@ -325,14 +325,41 @@ where T: Write + Seek
                         .to_diagnostic(list.span.clone()),
                 );
             }
-            self.comma(&mut comma)?;
-            write!(
-                self,
-                r#"{}:[{},{}]"#,
-                json!(*list.name),
-                json!(*list.name),
-                json!(list.default)
-            )?;
+            match &list.type_ {
+                Type::Any => {
+                    self.comma(&mut comma)?;
+                    write!(
+                        self,
+                        r#"{}:[{},{}]"#,
+                        json!(*list.name),
+                        json!(*list.name),
+                        json!(list.default)
+                    )?;
+                }
+                Type::Struct(struct_name, struct_name_span) => {
+                    let Some(struct_) = sprite.structs.get(struct_name) else {
+                        diags.push(
+                            DiagnosticKind::UnrecognizedStruct {
+                                name: struct_name.clone(),
+                            }
+                            .to_diagnostic(struct_name_span.clone()),
+                        );
+                        continue;
+                    };
+                    for (field_name, _) in &struct_.fields {
+                        self.comma(&mut comma)?;
+                        let resolved_name =
+                            json!(format!("{}.{}", list.name, field_name));
+                        write!(
+                            self,
+                            r#"{}:[{},{}]"#,
+                            resolved_name,
+                            resolved_name,
+                            json!(list.default),
+                        )?;
+                    }
+                }
+            }
         }
         self.write_all(br#"},"broadcasts":{"#)?;
         let mut comma = false;
@@ -1069,65 +1096,73 @@ where T: Write + Seek
                     write!(self, r#"[1,[10,{}]]"#, json!(**value))
                 }
             }
-            Expr::Accessor {
-                symbol_name,
-                symbol_span,
-                property_name,
-                property_span,
-            } => {
-                let enum_ = s.sprite.enums.get(symbol_name);
-                let variable =
-                    s.sprite.vars.get(symbol_name).or_else(|| {
-                        s.proc.and_then(|proc| proc.locals.get(symbol_name))
-                    });
-                if let Some(enum_) = enum_ {
-                    let index = enum_
-                        .variants
-                        .iter()
-                        .position(|(variant, _)| variant == property_name);
-                    if let Some(index) = index {
-                        write!(self, r#"[1,[10,{index}]]"#)?;
-                    } else {
-                        d.push(
-                            DiagnosticKind::UnrecognizedEnumVariant {
-                                enum_name: symbol_name.clone(),
-                                variant_name: property_name.clone(),
+            Expr::Accessor { val, property_name, property_span } => {
+                if !match &*val.borrow() {
+                    Expr::Name { name: symbol_name, span: symbol_span } => {
+                        let enum_ = s.sprite.enums.get(symbol_name);
+                        let variable = s.sprite.vars.get(symbol_name).or_else(|| {
+                            s.proc.and_then(|proc| proc.locals.get(symbol_name))
+                        });
+                        if let Some(enum_) = enum_ {
+                            let index = enum_
+                                .variants
+                                .iter()
+                                .position(|(variant, _)| variant == property_name);
+                            if let Some(index) = index {
+                                write!(self, r#"[1,[10,{index}]]"#)?;
+                            } else {
+                                d.push(
+                                    DiagnosticKind::UnrecognizedEnumVariant {
+                                        enum_name: symbol_name.clone(),
+                                        variant_name: property_name.clone(),
+                                    }
+                                    .to_diagnostic(property_span.clone()),
+                                );
                             }
-                            .to_diagnostic(property_span.clone()),
-                        );
-                    }
-                    Ok(())
-                } else if variable
-                    .is_some_and(|it| matches!(it.type_, Type::Struct { .. }))
-                {
-                    let type_name = match &variable.unwrap().type_ {
-                        Type::Struct(name, _) => name,
-                        _ => unreachable!(),
-                    };
-                    let struct_ = s.sprite.structs.get(type_name).unwrap();
-                    let found = struct_
-                        .fields
-                        .iter()
-                        .find(|(variant, _)| variant == property_name);
-                    if found.is_some() {
-                        let resolved = self
-                            .resolve_local_field(s, symbol_name, property_name)
-                            .unwrap_or_else(|| {
-                                format!("{}.{}", symbol_name, property_name)
-                            });
-                        let resolved = json!(resolved);
-                        write!(self, r#"[3,[12,{},{}],"#, resolved, resolved)?;
-                    } else {
-                        d.push(
-                            DiagnosticKind::UnrecognizedStructField {
-                                struct_name: symbol_name.clone(),
-                                field_name: property_name.clone(),
+                            Ok(())
+                        } else if variable
+                            .is_some_and(|it| matches!(it.type_, Type::Struct { .. }))
+                        {
+                            let type_name = match &variable.unwrap().type_ {
+                                Type::Struct(name, _) => name,
+                                _ => unreachable!(),
+                            };
+                            let struct_ = s.sprite.structs.get(type_name).unwrap();
+                            let found = struct_
+                                .fields
+                                .iter()
+                                .find(|(variant, _)| variant == property_name);
+                            if found.is_some() {
+                                let resolved = self
+                                    .resolve_local_field(s, symbol_name, property_name)
+                                    .unwrap_or_else(|| {
+                                        format!("{}.{}", symbol_name, property_name)
+                                    });
+                                let resolved = json!(resolved);
+                                write!(self, r#"[3,[12,{},{}],"#, resolved, resolved)?;
+                            } else {
+                                d.push(
+                                    DiagnosticKind::UnrecognizedStructField {
+                                        struct_name: symbol_name.clone(),
+                                        field_name: property_name.clone(),
+                                    }
+                                    .to_diagnostic(property_span.clone()),
+                                );
                             }
-                            .to_diagnostic(property_span.clone()),
-                        );
+                            self.input_shadow(s, shadow_id, name)
+                        } else {
+                            d.push(
+                                DiagnosticKind::InvalidPropertyAccess {
+                                    symbol_name: symbol_name.clone(),
+                                    property_name: property_name.clone(),
+                                }
+                                .to_diagnostic(symbol_span.clone()),
+                            );
+                        }
+                        true
                     }
-                    self.input_shadow(s, shadow_id, name)
-                } else {
+                    _ => false,
+                } {
                     d.push(
                         DiagnosticKind::InvalidPropertyAccess {
                             symbol_name: symbol_name.clone(),
@@ -1135,8 +1170,8 @@ where T: Write + Seek
                         }
                         .to_diagnostic(symbol_span.clone()),
                     );
-                    Ok(())
                 }
+                Ok(())
             }
             Expr::Name { name: var, span } => {
                 if let Some(resolved) =
@@ -1409,5 +1444,5 @@ where T: Write + Seek
 }
 
 fn local_variable_resolved_name(proc: &Proc, name: &SmolStr) -> String {
-    format!("{}.{}", proc.name, name)
+    format!("{}@{}", proc.name, name)
 }

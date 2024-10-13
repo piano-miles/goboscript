@@ -53,6 +53,12 @@ Declr: () = {
     },
     STRUCT <l:@L> <name:NAME> <r:@R> "{" <fields:SpannedComma<NAME>> "}" => {
         sprite.structs.insert(name.clone(), Struct::new(name, l..r, fields));
+    },
+    LIST <l:@L> <name:NAME> <r:@R> ";" => {
+        sprite.lists.insert(name.clone(), List::new(name.clone(), l..r, Default::default(), Type::Any));
+    },
+    LIST <tl:@L> <type_:NAME> <tr:@R> <l:@L> <name:NAME> <r:@R> ";" => {
+        sprite.lists.insert(name.clone(), List::new(name.clone(), l..r, Default::default(), Type::Struct(type_, tl..tr)));
     }
 }
 
@@ -107,7 +113,7 @@ Stmt: Stmt = {
     ADD <value:Expr> TO <l:@L> <name:NAME> <r:@R> ";" => Stmt::ListAdd { name, span: l..r, value },
     DELETE <l:@L> <name:NAME> <r:@R> ";" => {
         if !sprite.lists.contains_key(&name) {
-            sprite.lists.insert(name.clone(), List::new(name.clone(), l..r, Default::default()));
+            sprite.lists.insert(name.clone(), List::new(name.clone(), l..r, Default::default(), Type::Any));
         }
         Stmt::ListDeleteAll { name, span: l..r }
     },
@@ -189,6 +195,7 @@ Expr: Rrc<Expr> = {
 }
 
 Term: Rrc<Expr> = {
+    #[precedence(level="1")]
     "(" <Expr> ")",
     TRUE          => Expr::Int(1).into(),
     FALSE         => Expr::Int(0).into(),
@@ -204,11 +211,22 @@ Term: Rrc<Expr> = {
         Some(repr) => Ok(Expr::Repr { repr, span: l..r, args }.into()),
         None => Err(ParseError::User { error: DiagnosticKind::UnrecognizedReporter(name).to_diagnostic(l..r) }),
     },
+    #[precedence(level="2")]
     <l:@L> <e:Term> "[" <i:Expr> "]" <r:@R> => BinOp::Of.to_expr(e, i).into(),
+    #[precedence(level="3")]
     <sl:@L> <symbol_name:NAME> <sr:@R> "." <pl:@L> <property_name:NAME> <pr:@R> =>
         Expr::Accessor {
             symbol_name,
             symbol_span: sl..sr,
+            property_name,
+            property_span: pl..pr
+        }.into(),
+    #[precedence(level="4")]
+    <sl:@L> <list_name:NAME> <sr:@R> "[" <i:Expr> "]" "." <pl:@L> <property_name:NAME> <pr:@R> =>
+        Expr::ListAccessor {
+            list_name,
+            list_span: sl..sr,
+            index: i,
             property_name,
             property_span: pl..pr
         }.into(),
@@ -331,5 +349,6 @@ extern {
         TRUE           => Token::True,
         FALSE          => Token::False,
         STRUCT         => Token::Struct,
+        LIST           => Token::List,
     }
 }

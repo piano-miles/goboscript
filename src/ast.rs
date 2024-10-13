@@ -115,12 +115,13 @@ pub struct List {
     pub name: SmolStr,
     pub span: Span,
     pub default: Literals,
+    pub type_: Type,
     pub used: bool,
 }
 
 impl List {
-    pub fn new(name: SmolStr, span: Span, default: Literals) -> Self {
-        Self { name, span, default, used: false }
+    pub fn new(name: SmolStr, span: Span, default: Literals, type_: Type) -> Self {
+        Self { name, span, default, type_, used: false }
     }
 }
 
@@ -308,34 +309,12 @@ pub enum Expr {
     Int(i64),
     Float(f64),
     Str(SmolStr),
-    Name {
-        name: SmolStr,
-        span: Span,
-    },
-    Arg {
-        name: SmolStr,
-        span: Span,
-    },
-    Repr {
-        repr: Repr,
-        span: Span,
-        args: Exprs,
-    },
-    UnOp {
-        op: UnOp,
-        val: Rrc<Expr>,
-    },
-    BinOp {
-        op: BinOp,
-        lhs: Rrc<Expr>,
-        rhs: Rrc<Expr>,
-    },
-    Accessor {
-        symbol_name: SmolStr,
-        symbol_span: Span,
-        property_name: SmolStr,
-        property_span: Span,
-    },
+    Name { name: SmolStr, span: Span },
+    Arg { name: SmolStr, span: Span },
+    Repr { repr: Repr, span: Span, args: Exprs },
+    UnOp { op: UnOp, val: Rrc<Expr> },
+    BinOp { op: BinOp, lhs: Rrc<Expr>, rhs: Rrc<Expr> },
+    Accessor { val: Rrc<Expr>, property_name: SmolStr, property_span: Span },
 }
 
 impl Expr {
