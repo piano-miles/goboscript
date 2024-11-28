@@ -1,6 +1,1 @@
 /target
-**/*.sb3
-**/project.json
-/playground
-node_modules
-site

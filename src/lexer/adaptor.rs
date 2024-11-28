@@ -26,7 +26,7 @@ impl<'source> Iterator for Lexer<'source> {
         self.token_stream.next().map(|(token, span)| {
             token
                 .map(|token| (span.start, token, span.end))
-                .map_err(|_| DiagnosticKind::InvalidToken.to_diagnostic(span))
+                .map_err(|_| Diagnostic { kind: DiagnosticKind::InvalidToken, span: span.clone() })
         })
     }
 }
